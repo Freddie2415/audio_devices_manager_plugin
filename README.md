@@ -20,8 +20,9 @@ Add this dependency to your `pubspec.yaml` file:
 ```yaml
 dependencies:
   audio_devices_manager:
-    git:
-      url: https://github.com/your-username/audio_devices_manager.git
+  git:
+    url: https://github.com/Freddie2415/audio_devices_manager_plugin
+    ref: main
 ```
 
 For **iOS**, add this permission to your `Info.plist`:
