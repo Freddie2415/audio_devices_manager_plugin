@@ -1,7 +1,7 @@
 ## 📢 **audio_devices_manager**
-*A Flutter plugin for managing audio input and output devices on iOS.*
+*A Flutter plugin for managing audio input and output devices on iOS and Android.*
 
-🚀 **Current Status**: iOS **✅** | Android **❌** *(not implemented yet)*
+🚀 **Current Status**: iOS **✅** | Android **✅**
 
 ---
 
@@ -25,12 +25,26 @@ dependencies:
     ref: main
 ```
 
-For **iOS**, add this permission to your `Info.plist`:
+### **iOS Setup**
+Add this permission to your `Info.plist`:
 
 ```xml
 <key>NSMicrophoneUsageDescription</key>
 <string>We need access to the microphone for audio recording</string>
 ```
+
+### **Android Setup**
+The plugin automatically adds required permissions to your `AndroidManifest.xml`. However, you need to request runtime permissions in your app:
+
+```dart
+import 'package:permission_handler/permission_handler.dart';
+
+// Request microphone permission
+await Permission.microphone.request();
+await Permission.bluetoothConnect.request(); // For Bluetooth devices
+```
+
+**Minimum Android version:** Android 6.0 (API 23)
 
 ---
 
@@ -102,23 +116,56 @@ void listenToAudioChanges() {
 | `selectInput(String inputId)` | Sets the preferred audio input device. |
 | `getAvailableDataSources(String inputId)` | Returns available microphone data sources for a selected input. |
 | `selectDataSource(String inputId, String sourceId)` | Sets the preferred microphone data source. |
+| `getSelectedInputDeviceId()` | **Android only**: Returns device ID for use with `AudioRecord.setPreferredDevice()`. Returns null on iOS. |
 | `onAudioRouteChanged` | A stream that listens for audio input/output changes. |
 
 ---
 
 ## ❓ **Platform Support**
-| Platform | Support |
-|----------|---------|
-| **iOS** | ✅ Implemented (AVAudioSession) |
-| **Android** | ❌ Not implemented yet |
+| Platform | Support | Details |
+|----------|---------|---------|
+| **iOS** | ✅ Fully Implemented | AVAudioSession API |
+| **Android** | ✅ Fully Implemented | AudioManager + AudioDeviceInfo API (API 23+) |
+
+### **Android Implementation Notes**
+- **Data Sources**: On Android, `getAvailableDataSources()` returns audio source types instead of physical microphone characteristics:
+  - `Standard Microphone` - Default audio source
+  - `Voice Communication` - Optimized for VoIP calls
+  - `Voice Recognition` - Optimized for speech recognition
+  - `Camcorder` - Optimized for video recording
+- **Device Selection**:
+  - On Android 12+ (API 31+), uses `setCommunicationDevice()` for VoIP/WebRTC
+  - **For audio recording (MediaRecorder/AudioRecord)**: You must use `getSelectedInputDeviceId()` and call `setPreferredDevice()` - see [RECORDING_INTEGRATION.md](RECORDING_INTEGRATION.md)
+- **Bluetooth**: Full support for Bluetooth headsets (requires BLUETOOTH_CONNECT permission on Android 12+)
+
+### **⚠️ Important for Audio Recording**
+
+**iOS:** Device selection works automatically for all recording APIs ✅
+
+**Android:** You must manually integrate with your recording code:
+```dart
+// Select device
+await AudioDevicesManager.selectInput(deviceUid);
+
+// Get device ID
+final deviceId = await AudioDevicesManager.getSelectedInputDeviceId();
+
+// Pass to your AudioRecord and call setPreferredDevice()
+// See RECORDING_INTEGRATION.md for complete examples
+```
+
+📖 **[Full Integration Guide →](RECORDING_INTEGRATION.md)**
 
 ---
 
 ## 📜 **Roadmap**
 - ✅ Implement **iOS** support
-- ⏳ Add **Android** support (using `AudioManager`)
+- ✅ Add **Android** support (using `AudioManager` + `AudioDeviceInfo`)
 - 🔊 Add **audio recording and playback** features
 - 📈 Improve error handling and logging
+- 🧪 Add comprehensive unit and integration tests
+- 📱 Add support for audio output device selection
+- 🌐 Consider macOS/Windows support
 
 ---
 

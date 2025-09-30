@@ -80,7 +80,12 @@ public class AudioDevicesManagerPlugin: NSObject, FlutterPlugin {
             }
             selectDataSource(dataSourceID: dataSourceID)
             result(nil)
-            
+
+        case "getSelectedInputDeviceId":
+            // На iOS выбор устройства применяется автоматически через setPreferredInput
+            // Поэтому device ID не нужен - возвращаем nil
+            result(nil)
+
         default:
             result(FlutterMethodNotImplemented)
         }

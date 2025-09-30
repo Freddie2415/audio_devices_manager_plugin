@@ -65,6 +65,14 @@ class AudioDevicesManager {
     });
   }
 
+  /// Получить ID выбранного входного устройства (Android device ID)
+  /// Этот ID можно использовать для AudioRecord.setPreferredDevice()
+  /// На iOS возвращает null, так как выбор устройства применяется автоматически
+  static Future<int?> getSelectedInputDeviceId() async {
+    final result = await _methodChannel.invokeMethod('getSelectedInputDeviceId');
+    return result as int?;
+  }
+
   /// (Опционально) Чтобы «выключить» плагин, если реализовать dispose() в Swift
   static Future<void> dispose() async {
     // Можно сделать метод на MethodChannel, если нужна деактивация
