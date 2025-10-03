@@ -1,3 +1,9 @@
+## 0.0.4
+
+* 🐛 **Bug Fix**: Fixed missing dispose method handler in iOS MethodChannel
+* 🛡️ **Safety**: Added guard against repeated dispose calls in Android
+* 🔧 **Stability**: Wrapped clearCommunicationDevice in try-catch for better error handling
+
 ## 0.0.3
 
 * ✅ **Recording Integration**: Added `getSelectedInputDeviceId()` method for integration with AudioRecord
