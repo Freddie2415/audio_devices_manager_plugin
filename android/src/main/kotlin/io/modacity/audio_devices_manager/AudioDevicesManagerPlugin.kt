@@ -367,12 +367,21 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
     // MARK: - Очистка ресурсов
 
     private fun dispose() {
+        // Защита от повторного вызова dispose без инициализации
+        if (!isInitialized) {
+            return
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback)
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            audioManager?.clearCommunicationDevice()
+            try {
+                audioManager?.clearCommunicationDevice()
+            } catch (e: Exception) {
+                // Игнорируем ошибки если устройство не было установлено
+            }
         }
 
         eventSink = null

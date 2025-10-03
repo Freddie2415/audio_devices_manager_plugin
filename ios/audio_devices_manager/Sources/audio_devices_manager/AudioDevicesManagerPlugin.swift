@@ -86,6 +86,10 @@ public class AudioDevicesManagerPlugin: NSObject, FlutterPlugin {
             // Поэтому device ID не нужен - возвращаем nil
             result(nil)
 
+        case "dispose":
+            dispose()
+            result(nil)
+
         default:
             result(FlutterMethodNotImplemented)
         }
