@@ -1,3 +1,12 @@
+## 0.0.5
+
+* 🐛 **Android Fix**: Fixed Bluetooth device names showing phone model instead of actual device name (e.g., "AirPods" instead of "Redmi Note 8")
+* 🔍 **Smart Detection**: Implemented active Bluetooth device detection - prioritizes currently connected audio devices
+* 🧹 **Code Cleanup**: Removed `setCommunicationDevice()` logic (not needed for audio recording use cases)
+* 📜 **Permissions**: Removed `MODIFY_AUDIO_SETTINGS` permission (not required for device enumeration)
+* 🌍 **Localization**: Translated all code comments to English
+* ⚡ **Minimal Permissions**: Plugin now requires only Bluetooth permissions for device name resolution
+
 ## 0.0.4
 
 * 🐛 **Bug Fix**: Fixed missing dispose method handler in iOS MethodChannel

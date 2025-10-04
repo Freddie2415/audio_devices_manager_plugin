@@ -1,5 +1,7 @@
 package io.modacity.audio_devices_manager
 
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.content.SharedPreferences
 import android.media.AudioDeviceCallback
@@ -9,6 +11,7 @@ import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
@@ -18,40 +21,40 @@ import io.flutter.plugin.common.MethodChannel.Result
 
 /** AudioDevicesManagerPlugin */
 class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler {
-    /// MethodChannel для одноразовых запросов
+    /// MethodChannel for one-time requests
     private lateinit var methodChannel: MethodChannel
 
-    /// EventChannel для стримов событий
+    /// EventChannel for event streams
     private lateinit var eventChannel: EventChannel
 
     /// Android AudioManager
     private var audioManager: AudioManager? = null
 
-    /// Context приложения
+    /// Application context
     private var context: Context? = null
 
-    /// SharedPreferences для сохранения выбора пользователя
+    /// SharedPreferences for saving user selection
     private var sharedPreferences: SharedPreferences? = null
 
-    /// EventSink для отправки событий в Dart
+    /// EventSink for sending events to Dart
     private var eventSink: EventChannel.EventSink? = null
 
-    /// Флаг инициализации
+    /// Initialization flag
     private var isInitialized = false
 
-    /// Список доступных входов
+    /// List of available inputs
     private var availableInputs: List<AudioDeviceInfo> = emptyList()
 
-    /// Текущий выбранный вход
+    /// Currently selected input
     private var selectedInput: AudioDeviceInfo? = null
 
-    /// Текущий выбранный audioSource (для dataSources)
+    /// Currently selected audioSource (for dataSources)
     private var selectedAudioSource: Int = MediaRecorder.AudioSource.MIC
 
-    /// Handler для UI thread операций
+    /// Handler for UI thread operations
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    /// Callback для отслеживания изменений аудио устройств
+    /// Callback for tracking audio device changes
     private val audioDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
             mainHandler.post {
@@ -73,11 +76,11 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
         audioManager = context?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         sharedPreferences = context?.getSharedPreferences("audio_devices_manager", Context.MODE_PRIVATE)
 
-        // Настраиваем MethodChannel
+        // Setup MethodChannel
         methodChannel = MethodChannel(flutterPluginBinding.binaryMessenger, "audio_devices_manager")
         methodChannel.setMethodCallHandler(this)
 
-        // Настраиваем EventChannel
+        // Setup EventChannel
         eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "audio_devices_manager_events")
         eventChannel.setStreamHandler(this)
     }
@@ -152,7 +155,7 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
         eventSink = events
-        // При первой подписке отправляем текущее состояние
+        // Send current state on first subscription
         sendDeviceUpdateEvent()
     }
 
@@ -160,7 +163,7 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
         eventSink = null
     }
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
     private fun initialize() {
         if (isInitialized) {
@@ -168,32 +171,32 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
         }
         isInitialized = true
 
-        // Регистрируем callback для отслеживания изменений
+        // Register callback for tracking changes
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             audioManager?.registerAudioDeviceCallback(audioDeviceCallback, mainHandler)
         }
 
-        // Загружаем сохраненный audioSource
+        // Load saved audioSource
         selectedAudioSource = sharedPreferences?.getInt("selectedAudioSource", MediaRecorder.AudioSource.MIC)
             ?: MediaRecorder.AudioSource.MIC
 
-        // Получаем текущее состояние устройств
+        // Get current device state
         fetchAudioDevices()
     }
 
-    // MARK: - Получение списка устройств
+    // MARK: - Fetching device list
 
     private fun fetchAudioDevices() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            // Получаем все входные устройства
+            // Get all input devices
             availableInputs = audioManager?.getDevices(AudioManager.GET_DEVICES_INPUTS)
                 ?.filter { isValidInputDevice(it) }
                 ?: emptyList()
 
-            // Загружаем последний выбранный вход
+            // Load last selected input
             loadSelectedInput()
 
-            // Отправляем событие в Dart
+            // Send event to Dart
             sendDeviceUpdateEvent()
         }
     }
@@ -223,28 +226,127 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
 
     private fun getDeviceName(device: AudioDeviceInfo): String {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            // Если есть productName, используем его
-            val productName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                device.productName.toString()
-            } else {
-                null
-            }
-
-            if (!productName.isNullOrEmpty() && productName != "null") {
-                return productName
-            }
-
-            // Иначе используем тип устройства
+            // For built-in and wired devices use human-readable names by type
+            // For external (USB/Bluetooth) get actual device name
             return when (device.type) {
                 AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Built-in Microphone"
-                AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth Headset"
                 AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Wired Headset"
-                AudioDeviceInfo.TYPE_USB_DEVICE -> "USB Device"
-                AudioDeviceInfo.TYPE_USB_HEADSET -> "USB Headset"
+                AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> {
+                    // For Bluetooth get device name via BluetoothAdapter
+                    getBluetoothDeviceName(device) ?: "Bluetooth Headset"
+                }
+                AudioDeviceInfo.TYPE_USB_DEVICE,
+                AudioDeviceInfo.TYPE_USB_HEADSET -> {
+                    // For USB devices show productName if available
+                    val productName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        device.productName.toString()
+                    } else null
+
+                    if (!productName.isNullOrEmpty() && productName != "null") {
+                        productName
+                    } else {
+                        if (device.type == AudioDeviceInfo.TYPE_USB_HEADSET) "USB Headset" else "USB Device"
+                    }
+                }
                 else -> "Unknown"
             }
         }
         return "Unknown"
+    }
+
+    @Suppress("MissingPermission")
+    private fun getBluetoothDeviceName(device: AudioDeviceInfo): String? {
+        val TAG = "AudioDevicesManager"
+        try {
+            val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
+            if (bluetoothAdapter == null) {
+                Log.d(TAG, "BluetoothAdapter is null")
+                return null
+            }
+
+            // Method 1: Try via address (Android P+)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val address = device.address
+                Log.d(TAG, "Device address: $address")
+                if (!address.isNullOrEmpty()) {
+                    try {
+                        val bluetoothDevice = bluetoothAdapter.getRemoteDevice(address)
+                        val name = bluetoothDevice.name
+                        Log.d(TAG, "Bluetooth device name from address: $name")
+                        if (!name.isNullOrEmpty()) {
+                            return name
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error getting device by address: ${e.message}")
+                    }
+                }
+            }
+
+            // Method 2: Search for actively connected device among bonded devices
+            try {
+                val bondedDevices = bluetoothAdapter.bondedDevices
+                Log.d(TAG, "Bonded devices count: ${bondedDevices?.size ?: 0}")
+
+                if (bondedDevices != null && bondedDevices.isNotEmpty()) {
+                    // First search for connected device
+                    var connectedAudioDevice: String? = null
+
+                    for (btDevice in bondedDevices) {
+                        val deviceClass = btDevice.bluetoothClass
+                        val majorClass = deviceClass?.majorDeviceClass
+                        val name = btDevice.name
+
+                        // Log all devices for diagnostics
+                        Log.d(TAG, "Bonded device: $name, address: ${btDevice.address}, majorClass: $majorClass, bondState: ${btDevice.bondState}")
+
+                        // Check if device is connected
+                        try {
+                            val isConnectedMethod = btDevice.javaClass.getMethod("isConnected")
+                            val isConnected = isConnectedMethod.invoke(btDevice) as Boolean
+                            Log.d(TAG, "  -> isConnected: $isConnected")
+
+                            if (isConnected && deviceClass != null) {
+                                // Audio/Video class (0x0400 = 1024)
+                                if (majorClass == 1024) {
+                                    Log.d(TAG, "Found CONNECTED audio device: $name")
+                                    if (!name.isNullOrEmpty()) {
+                                        connectedAudioDevice = name
+                                        break
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.d(TAG, "  -> Cannot check connection status: ${e.message}")
+                        }
+                    }
+
+                    // If found connected device, return it
+                    if (connectedAudioDevice != null) {
+                        return connectedAudioDevice
+                    }
+
+                    // If no connected device found, use first audio device as fallback
+                    for (btDevice in bondedDevices) {
+                        val deviceClass = btDevice.bluetoothClass
+                        if (deviceClass != null) {
+                            val majorClass = deviceClass.majorDeviceClass
+                            if (majorClass == 1024) {
+                                val name = btDevice.name
+                                if (!name.isNullOrEmpty()) {
+                                    Log.d(TAG, "Using first audio device as fallback: $name")
+                                    return name
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error getting bonded devices: ${e.message}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in getBluetoothDeviceName: ${e.message}")
+        }
+        return null
     }
 
     private fun deviceInfoToMap(device: AudioDeviceInfo): Map<String, String> {
@@ -254,7 +356,7 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
         )
     }
 
-    // MARK: - Выбор входного устройства
+    // MARK: - Input device selection
 
     private fun selectInput(uid: String) {
         val device = availableInputs.firstOrNull { it.id.toString() == uid }
@@ -264,20 +366,10 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
 
         selectedInput = device
 
-        // Сохраняем выбор
+        // Save selection
         sharedPreferences?.edit()?.putString("selectedAudioInput", uid)?.apply()
 
-        // Устанавливаем preferred device для communication
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Android 12+ (API 31+)
-            try {
-                audioManager?.setCommunicationDevice(device)
-            } catch (e: Exception) {
-                // Устройство может не поддерживать communication режим
-            }
-        }
-
-        // Отправляем событие
+        // Send event
         sendDeviceUpdateEvent()
     }
 
@@ -288,28 +380,17 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
             selectedInput = availableInputs.firstOrNull { it.id.toString() == savedUID }
         }
 
-        // Если ничего не сохранено или устройство не найдено, берем первое
+        // If nothing saved or device not found, take first one
         if (selectedInput == null && availableInputs.isNotEmpty()) {
             selectedInput = availableInputs.first()
         }
-
-        // Применяем выбор
-        selectedInput?.let { device ->
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                try {
-                    audioManager?.setCommunicationDevice(device)
-                } catch (e: Exception) {
-                    // Игнорируем ошибки
-                }
-            }
-        }
     }
 
-    // MARK: - Data Sources (эмуляция через audioSource)
+    // MARK: - Data Sources (emulation via audioSource)
 
     private fun getAvailableDataSourcesList(): List<Map<String, Any>> {
-        // На Android нет прямого аналога iOS dataSources
-        // Возвращаем типы audioSource как альтернативу
+        // Android has no direct equivalent of iOS dataSources
+        // Return audioSource types as alternative
         return listOf(
             mapOf(
                 "dataSourceID" to MediaRecorder.AudioSource.MIC,
@@ -333,14 +414,14 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
     private fun selectDataSource(dataSourceID: Int) {
         selectedAudioSource = dataSourceID
 
-        // Сохраняем выбор
+        // Save selection
         sharedPreferences?.edit()?.putInt("selectedAudioSource", dataSourceID)?.apply()
 
-        // Отправляем событие
+        // Send event
         sendDeviceUpdateEvent()
     }
 
-    // MARK: - Отправка событий в Dart
+    // MARK: - Sending events to Dart
 
     private fun sendDeviceUpdateEvent() {
         val sink = eventSink ?: return
@@ -364,24 +445,16 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
         }
     }
 
-    // MARK: - Очистка ресурсов
+    // MARK: - Resource cleanup
 
     private fun dispose() {
-        // Защита от повторного вызова dispose без инициализации
+        // Protect against repeated dispose calls without initialization
         if (!isInitialized) {
             return
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback)
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            try {
-                audioManager?.clearCommunicationDevice()
-            } catch (e: Exception) {
-                // Игнорируем ошибки если устройство не было установлено
-            }
         }
 
         eventSink = null

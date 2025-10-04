@@ -134,9 +134,9 @@ void listenToAudioChanges() {
   - `Voice Recognition` - Optimized for speech recognition
   - `Camcorder` - Optimized for video recording
 - **Device Selection**:
-  - On Android 12+ (API 31+), uses `setCommunicationDevice()` for VoIP/WebRTC
+  - Plugin provides device enumeration and selection tracking
   - **For audio recording (MediaRecorder/AudioRecord)**: You must use `getSelectedInputDeviceId()` and call `setPreferredDevice()` - see [RECORDING_INTEGRATION.md](RECORDING_INTEGRATION.md)
-- **Bluetooth**: Full support for Bluetooth headsets (requires BLUETOOTH_CONNECT permission on Android 12+)
+- **Bluetooth**: Full support for Bluetooth headsets with accurate device names (requires BLUETOOTH_CONNECT permission on Android 12+)
 
 ### **⚠️ Important for Audio Recording**
 
