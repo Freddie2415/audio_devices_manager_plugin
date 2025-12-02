@@ -3,40 +3,45 @@ import UIKit
 import AVFoundation
 
 public class AudioDevicesManagerPlugin: NSObject, FlutterPlugin {
-    /// Флаг, чтобы не инициализировать сессию повторно
+    /// Flag to prevent repeated session initialization
     private var isInitialized = false
-    
-    // MARK: - Свойства для аудио
+
+    // MARK: - Audio properties
     private var audioSession = AVAudioSession.sharedInstance()
     private var availableInputs: [AVAudioSessionPortDescription] = []
     private var selectedInput: AVAudioSessionPortDescription?
     private var availableDataSources: [AVAudioSessionDataSourceDescription] = []
     private var selectedDataSource: AVAudioSessionDataSourceDescription?
-    
-    // MARK: - EventChannel (для стримов изменений)
+
+    // Output devices
+    private var availableOutputs: [AVAudioSessionPortDescription] = []
+    private var selectedOutput: AVAudioSessionPortDescription?
+    private var defaultToSpeaker: Bool = true
+
+    // MARK: - EventChannel (for change streams)
     private var eventSink: FlutterEventSink?
     
-    // MARK: - Регистрация плагина (вызывается фреймворком Flutter)
+    // MARK: - Plugin registration (called by Flutter framework)
     public static func register(with registrar: FlutterPluginRegistrar) {
-        // MethodChannel: одноразовые запросы (getAvailableInputs, selectInput, и т. д.)
+        // MethodChannel: one-time requests (getAvailableInputs, selectInput, etc.)
         let methodChannel = FlutterMethodChannel(
             name: "audio_devices_manager",
             binaryMessenger: registrar.messenger()
         )
-        // EventChannel: события (изменение маршрута, выбор устройства и т. п.)
+        // EventChannel: events (route changes, device selection, etc.)
         let eventChannel = FlutterEventChannel(
             name: "audio_devices_manager_events",
             binaryMessenger: registrar.messenger()
         )
-        
+
         let instance = AudioDevicesManagerPlugin()
-        // Привязываем обработчик методов
+        // Bind method handler
         registrar.addMethodCallDelegate(instance, channel: methodChannel)
-        // Привязываем обработчик стримов
+        // Bind stream handler
         eventChannel.setStreamHandler(instance)
     }
-    
-    // MARK: - Обработка MethodChannel
+
+    // MARK: - MethodChannel handling
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
         case "initialize":
@@ -82,9 +87,54 @@ public class AudioDevicesManagerPlugin: NSObject, FlutterPlugin {
             result(nil)
 
         case "getSelectedInputDeviceId":
-            // На iOS выбор устройства применяется автоматически через setPreferredInput
-            // Поэтому device ID не нужен - возвращаем nil
+            // On iOS device selection is applied automatically via setPreferredInput
+            // So device ID is not needed - return nil
             result(nil)
+
+        case "getAvailableOutputs":
+            let outputsInfo = getAvailableOutputsList()
+            result(outputsInfo)
+
+        case "selectOutput":
+            guard let args = call.arguments as? [String: Any],
+                  let uid = args["uid"] as? String
+            else {
+                result(FlutterError(code: "BAD_ARGS", message: "No UID provided", details: nil))
+                return
+            }
+            selectOutput(uid: uid)
+            result(nil)
+
+        case "getSelectedOutput":
+            if let output = selectedOutput {
+                result([
+                    "uid": output.uid,
+                    "portName": output.portName
+                ])
+            } else {
+                result(nil)
+            }
+
+        case "getSelectedOutputDeviceId":
+            // On iOS device ID is not needed for outputs
+            result(nil)
+
+        case "setDefaultToSpeaker":
+            guard let args = call.arguments as? [String: Any],
+                  let enable = args["enable"] as? Bool
+            else {
+                result(FlutterError(code: "BAD_ARGS", message: "No enable value provided", details: nil))
+                return
+            }
+            setDefaultToSpeakerOption(enable: enable)
+            result(nil)
+
+        case "showRoutePicker":
+            // System Route Picker must be shown from UI layer
+            // Here we only send a notification
+            result(FlutterError(code: "NOT_IMPLEMENTED",
+                               message: "Route Picker must be called from UI layer",
+                               details: nil))
 
         case "dispose":
             dispose()
@@ -96,17 +146,17 @@ public class AudioDevicesManagerPlugin: NSObject, FlutterPlugin {
     }
 }
 
-// MARK: - Реализация EventChannel (FlutterStreamHandler)
+// MARK: - EventChannel implementation (FlutterStreamHandler)
 extension AudioDevicesManagerPlugin: FlutterStreamHandler {
-    // Когда Dart подписывается на события
+    // When Dart subscribes to events
     public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         self.eventSink = events
-        // При первой подписке сразу шлём текущее состояние
+        // Send current state immediately on first subscription
         sendDeviceUpdateEvent()
         return nil
     }
-    
-    // Когда Dart отписывается от событий
+
+    // When Dart unsubscribes from events
     public func onCancel(withArguments arguments: Any?) -> FlutterError? {
         self.eventSink = nil
         return nil
@@ -114,18 +164,18 @@ extension AudioDevicesManagerPlugin: FlutterStreamHandler {
 }
 
 
-// MARK: - Вспомогательные методы
+// MARK: - Helper methods
 extension AudioDevicesManagerPlugin {
-    /// Основной метод инициализации аудиосессии
+    /// Main audio session initialization method
     private func initializeAudioSession() {
-        // Защита от повторных инициализаций
+        // Protection against repeated initialization
         guard !isInitialized else {
-            // Уже инициализировано, пропускаем
+            // Already initialized, skip
             return
         }
         isInitialized = true
-        
-        // Настраиваем аудиосессию
+
+        // Configure audio session
         do {
             try audioSession.setCategory(.playAndRecord,
                                          mode: .default,
@@ -136,11 +186,11 @@ extension AudioDevicesManagerPlugin {
         } catch {
             print("Error setting audio session: \(error.localizedDescription)")
         }
-        
-        // Сразу получаем текущее состояние устройств
+
+        // Get current device state immediately
         fetchAudioDevices()
-        
-        // Подписываемся на изменения маршрута
+
+        // Subscribe to route changes
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleRouteChange(_:)),
@@ -148,31 +198,42 @@ extension AudioDevicesManagerPlugin {
             object: nil
         )
     }
-    
-    /// Обработчик изменения маршрута аудио (подключение/отключение наушников и т. д.)
+
+    /// Audio route change handler (headphones connect/disconnect, etc.)
     @objc private func handleRouteChange(_ notification: Notification) {
         DispatchQueue.main.async {
             self.fetchAudioDevices()
         }
     }
-    
-    /// Обновляем список доступных входов и выбранное устройство
+
+    /// Update list of available inputs and selected device
     private func fetchAudioDevices() {
         availableInputs = audioSession.availableInputs ?? []
-        
-        // Загружаем последний выбранный вход (из UserDefaults), если есть
+
+        // Load last selected input (from UserDefaults), if any
         loadSelectedInput()
-        
-        // Обновляем dataSources
+
+        // Update dataSources
         updateDataSources()
-        
-        // Шлём ивент в Dart
+
+        // Update outputs
+        fetchOutputDevices()
+
+        // Send event to Dart
         sendDeviceUpdateEvent()
     }
-    
-    // MARK: - Работа со списком входов
-    
-    /// Возвращает массив словарей для Dart
+
+    /// Get list of available outputs from current route
+    private func fetchOutputDevices() {
+        availableOutputs = audioSession.currentRoute.outputs
+
+        // Select current active output
+        selectedOutput = availableOutputs.first
+    }
+
+    // MARK: - Working with input list
+
+    /// Returns array of dictionaries for Dart
     private func getAvailableInputsList() -> [[String: String]] {
         return availableInputs.map {
             [
@@ -181,11 +242,11 @@ extension AudioDevicesManagerPlugin {
             ]
         }
     }
-    
-    /// Выбор входа по uid
+
+    /// Select input by uid
     private func selectInput(uid: String) {
         guard let input = availableInputs.first(where: { $0.uid == uid }) else { return }
-        
+
         do {
             try audioSession.setPreferredInput(input)
             selectedInput = input
@@ -193,23 +254,23 @@ extension AudioDevicesManagerPlugin {
         } catch {
             print("Error selecting audio input: \(error.localizedDescription)")
         }
-        
-        // Обновим dataSources, сообщим об изменениях
+
+        // Update dataSources, notify about changes
         updateDataSources()
         sendDeviceUpdateEvent()
     }
-    
-    /// Загрузка ранее сохранённого входа
+
+    /// Load previously saved input
     private func loadSelectedInput() {
         guard
             let savedUID = UserDefaults.standard.string(forKey: "selectedAudioInput"),
             let input = availableInputs.first(where: { $0.uid == savedUID })
         else {
-            // Если ничего не сохранено, берём первый
+            // If nothing saved, take first
             selectedInput = availableInputs.first
             return
         }
-        
+
         do {
             try audioSession.setPreferredInput(input)
             selectedInput = input
@@ -217,10 +278,10 @@ extension AudioDevicesManagerPlugin {
             print("Error setting saved input: \(error.localizedDescription)")
         }
     }
-    
+
     // MARK: - Data Sources
-    
-    /// Обновляем список dataSources
+
+    /// Update dataSources list
     private func updateDataSources() {
         availableDataSources = selectedInput?.dataSources ?? []
         loadSelectedDataSource()
@@ -267,13 +328,67 @@ extension AudioDevicesManagerPlugin {
             print("Error loading saved data source: \(error.localizedDescription)")
         }
     }
-    
-    // MARK: - Отправка события (EventChannel)
-    
-    /// Отправляем текущее состояние (список устройств + выбранное) в Dart
+
+    // MARK: - Output Devices
+
+    /// Returns array of dictionaries for Dart (outputs)
+    private func getAvailableOutputsList() -> [[String: String]] {
+        return availableOutputs.map {
+            [
+                "uid": $0.uid,
+                "portName": $0.portName
+            ]
+        }
+    }
+
+    /// Select output by uid
+    /// IMPORTANT: On iOS cannot programmatically select specific output device
+    /// This is informational only, actual selection is done by the system
+    private func selectOutput(uid: String) {
+        guard let output = availableOutputs.first(where: { $0.uid == uid }) else {
+            print("Output device not found: \(uid)")
+            return
+        }
+
+        // On iOS we cannot programmatically change the output
+        // But we can save user preference for information
+        selectedOutput = output
+        UserDefaults.standard.set(uid, forKey: "selectedAudioOutput")
+
+        print("Output selection saved (iOS limitation: cannot programmatically change): \(output.portName)")
+        sendDeviceUpdateEvent()
+    }
+
+    /// Set defaultToSpeaker option
+    private func setDefaultToSpeakerOption(enable: Bool) {
+        defaultToSpeaker = enable
+
+        var options: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
+        if enable {
+            options.insert(.defaultToSpeaker)
+        }
+
+        do {
+            try audioSession.setCategory(.playAndRecord,
+                                        mode: .default,
+                                        options: options)
+            UserDefaults.standard.set(enable, forKey: "defaultToSpeaker")
+
+            // Update device list after changing options
+            fetchOutputDevices()
+
+            print("DefaultToSpeaker set to: \(enable)")
+        } catch {
+            print("Error setting defaultToSpeaker option: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Sending events (EventChannel)
+
+    /// Send current state (device list + selected) to Dart
     private func sendDeviceUpdateEvent() {
         guard let eventSink = eventSink else { return }
-        
+
         let data: [String: Any] = [
             "availableInputs": getAvailableInputsList(),
             "selectedInput": selectedInput.map {
@@ -288,15 +403,22 @@ extension AudioDevicesManagerPlugin {
                     "dataSourceID": $0.dataSourceID,
                     "dataSourceName": $0.dataSourceName
                 ]
+            } ?? NSNull(),
+            "availableOutputs": getAvailableOutputsList(),
+            "selectedOutput": selectedOutput.map {
+                [
+                    "uid": $0.uid,
+                    "portName": $0.portName
+                ]
             } ?? NSNull()
         ]
-        
+
         eventSink(data)
     }
-    
-    // MARK: - (Опционально) Метод для снятия подписок и деактивации
-    
-    /// Вы можете при необходимости вызвать это из Dart, чтобы полностью «выключить» плагин
+
+    // MARK: - (Optional) Method for unsubscribing and deactivation
+
+    /// You can call this from Dart if needed to completely "turn off" the plugin
     private func dispose() {
         NotificationCenter.default.removeObserver(self)
         try? audioSession.setActive(false)

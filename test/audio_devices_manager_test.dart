@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:audio_devices_manager/audio_devices_manager.dart';
 import 'package:audio_devices_manager/audio_devices_manager_platform_interface.dart';
 import 'package:audio_devices_manager/audio_devices_manager_method_channel.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -20,10 +19,9 @@ void main() {
   });
 
   test('getPlatformVersion', () async {
-    AudioDevicesManager audioDevicesManagerPlugin = AudioDevicesManager();
     MockAudioDevicesManagerPlatform fakePlatform = MockAudioDevicesManagerPlatform();
     AudioDevicesManagerPlatform.instance = fakePlatform;
 
-    // expect(await audioDevicesManagerPlugin.getPlatformVersion(), '42');
+    // expect(await AudioDevicesManager.getPlatformVersion(), '42');
   });
 }

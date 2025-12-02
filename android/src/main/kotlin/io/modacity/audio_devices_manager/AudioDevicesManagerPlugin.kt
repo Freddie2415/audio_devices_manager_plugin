@@ -51,6 +51,12 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
     /// Currently selected audioSource (for dataSources)
     private var selectedAudioSource: Int = MediaRecorder.AudioSource.MIC
 
+    /// List of available outputs
+    private var availableOutputs: List<AudioDeviceInfo> = emptyList()
+
+    /// Currently selected output
+    private var selectedOutput: AudioDeviceInfo? = null
+
     /// Handler for UI thread operations
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -140,6 +146,41 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
                 result.success(deviceId)
             }
 
+            "getAvailableOutputs" -> {
+                val outputs = getAvailableOutputsList()
+                result.success(outputs)
+            }
+
+            "selectOutput" -> {
+                val uid = call.argument<String>("uid")
+                if (uid == null) {
+                    result.error("BAD_ARGS", "No UID provided", null)
+                    return
+                }
+                selectOutput(uid)
+                result.success(null)
+            }
+
+            "getSelectedOutput" -> {
+                val selected = selectedOutput?.let { deviceInfoToMap(it) }
+                result.success(selected)
+            }
+
+            "getSelectedOutputDeviceId" -> {
+                val deviceId = selectedOutput?.id
+                result.success(deviceId)
+            }
+
+            "setDefaultToSpeaker" -> {
+                // No-op on Android - use selectOutput instead
+                result.success(null)
+            }
+
+            "showRoutePicker" -> {
+                // No-op on Android - not applicable
+                result.success(null)
+            }
+
             "dispose" -> {
                 dispose()
                 result.success(null)
@@ -195,6 +236,14 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
 
             // Load last selected input
             loadSelectedInput()
+
+            // Get all output devices
+            availableOutputs = audioManager?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                ?.filter { isValidOutputDevice(it) }
+                ?: emptyList()
+
+            // Load last selected output
+            loadSelectedOutput()
 
             // Send event to Dart
             sendDeviceUpdateEvent()
@@ -396,6 +445,117 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
         }
     }
 
+    // MARK: - Output device management
+
+    private fun isValidOutputDevice(device: AudioDeviceInfo): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return when (device.type) {
+                AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
+                AudioDeviceInfo.TYPE_BUILTIN_EARPIECE,
+                AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                AudioDeviceInfo.TYPE_USB_DEVICE,
+                AudioDeviceInfo.TYPE_USB_HEADSET -> true
+                else -> false
+            }
+        }
+        return false
+    }
+
+    private fun getAvailableOutputsList(): List<Map<String, String>> {
+        return availableOutputs.map { device ->
+            mapOf(
+                "uid" to device.id.toString(),
+                "portName" to getOutputDeviceName(device)
+            )
+        }
+    }
+
+    private fun getOutputDeviceName(device: AudioDeviceInfo): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return when (device.type) {
+                AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "Built-in Speaker"
+                AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "Built-in Earpiece"
+                AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "Wired Headphones"
+                AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Wired Headset"
+                AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> {
+                    // For Bluetooth get device name via BluetoothAdapter
+                    getBluetoothDeviceName(device) ?: "Bluetooth Headset"
+                }
+                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> {
+                    // For Bluetooth get device name via BluetoothAdapter
+                    getBluetoothDeviceName(device) ?: "Bluetooth Audio"
+                }
+                AudioDeviceInfo.TYPE_USB_DEVICE,
+                AudioDeviceInfo.TYPE_USB_HEADSET -> {
+                    // For USB devices show productName if available
+                    val productName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        device.productName.toString()
+                    } else null
+
+                    if (!productName.isNullOrEmpty() && productName != "null") {
+                        productName
+                    } else {
+                        if (device.type == AudioDeviceInfo.TYPE_USB_HEADSET) "USB Headset" else "USB Device"
+                    }
+                }
+                else -> "Unknown"
+            }
+        }
+        return "Unknown"
+    }
+
+    private fun selectOutput(uid: String) {
+        val device = availableOutputs.firstOrNull { it.id.toString() == uid }
+        if (device == null) {
+            return
+        }
+
+        selectedOutput = device
+
+        // Save selection
+        sharedPreferences?.edit()?.putString("selectedAudioOutput", uid)?.apply()
+
+        // For Android S (API 31+) we can use setCommunicationDevice
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                audioManager?.setCommunicationDevice(device)
+                Log.d("AudioDevicesManager", "Successfully set communication device: ${getOutputDeviceName(device)}")
+            } catch (e: Exception) {
+                Log.e("AudioDevicesManager", "Error setting communication device: ${e.message}")
+            }
+        } else {
+            Log.d("AudioDevicesManager", "Device selection saved. Use getSelectedOutputDeviceId() to apply to AudioTrack")
+        }
+
+        // Send event
+        sendDeviceUpdateEvent()
+    }
+
+    private fun loadSelectedOutput() {
+        val savedUID = sharedPreferences?.getString("selectedAudioOutput", null)
+
+        if (savedUID != null) {
+            selectedOutput = availableOutputs.firstOrNull { it.id.toString() == savedUID }
+        }
+
+        // If nothing saved or device not found, take first one
+        if (selectedOutput == null && availableOutputs.isNotEmpty()) {
+            selectedOutput = availableOutputs.first()
+        }
+
+        // For Android S+ restore the communication device
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && selectedOutput != null) {
+            try {
+                audioManager?.setCommunicationDevice(selectedOutput!!)
+            } catch (e: Exception) {
+                Log.e("AudioDevicesManager", "Error restoring communication device: ${e.message}")
+            }
+        }
+    }
+
     // MARK: - Data Sources (emulation via audioSource)
 
     private fun getAvailableDataSourcesList(): List<Map<String, Any>> {
@@ -440,7 +600,9 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
             "availableInputs" to getAvailableInputsList(),
             "selectedInput" to (selectedInput?.let { deviceInfoToMap(it) }),
             "availableDataSources" to getAvailableDataSourcesList(),
-            "selectedDataSource" to getSelectedDataSource()
+            "selectedDataSource" to getSelectedDataSource(),
+            "availableOutputs" to getAvailableOutputsList(),
+            "selectedOutput" to (selectedOutput?.let { deviceInfoToMap(it) })
         )
 
         mainHandler.post {

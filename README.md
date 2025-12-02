@@ -7,9 +7,10 @@
 
 ### 📌 **Features**
 - 🔍 Get a list of available **audio input devices** (microphones)
-- 🎧 Get a list of **audio output devices** (speakers, headphones)
+- 🎧 Get a list of **audio output devices** (speakers, headphones, Bluetooth)
 - 🎤 Select an **audio input device**
-- 🔊 Select a **microphone data source** (e.g., Wide Spectrum, Voice Isolation)
+- 🔊 Select an **audio output device** (full control on Android, limited on iOS)
+- 🎚️ Select a **microphone data source** (e.g., Wide Spectrum, Voice Isolation)
 - 📱 **Listen for real-time audio route changes** (when devices are plugged in or removed)
 
 ---
@@ -66,18 +67,31 @@ void fetchInputs() async {
 ### 🎧 **Get available audio outputs**
 ```dart
 void fetchOutputs() async {
-  final audioManager = AudioDevicesManager();
-  List<AudioOutput> outputs = await audioManager.getAvailableOutputs();
-  print("Available Outputs: ${outputs.map((e) => e.name).toList()}");
+  List<Map<String, dynamic>> outputs = await AudioDevicesManager.getAvailableOutputs();
+  print("Available Outputs: $outputs");
 }
 ```
 
 ### 🎤 **Select an input device**
 ```dart
 void selectMicrophone(String inputId) async {
-  final audioManager = AudioDevicesManager();
-  await audioManager.selectInput(inputId);
+  await AudioDevicesManager.selectInput(inputId);
   print("Selected input: $inputId");
+}
+```
+
+### 🔊 **Select an output device**
+```dart
+void selectSpeaker(String outputId) async {
+  await AudioDevicesManager.selectOutput(outputId);
+  print("Selected output: $outputId");
+
+  // Android only: Get device ID for AudioTrack integration
+  if (Platform.isAndroid) {
+    final deviceId = await AudioDevicesManager.getSelectedOutputDeviceId();
+    print("Android Output Device ID: $deviceId");
+    // Use deviceId with audioTrack.setPreferredDevice()
+  }
 }
 ```
 
@@ -97,11 +111,13 @@ void fetchAndSelectDataSource(String inputId) async {
 ### 📱 **Listen for audio route changes**
 ```dart
 void listenToAudioChanges() {
-  final audioManager = AudioDevicesManager();
-  audioManager.onAudioRouteChanged.listen((event) {
+  AudioDevicesManager.deviceEvents().listen((event) {
     print("Audio route changed!");
-    print("New Inputs: ${event.inputs}");
-    print("New Outputs: ${event.outputs}");
+    print("Available Inputs: ${event['availableInputs']}");
+    print("Selected Input: ${event['selectedInput']}");
+    print("Available Outputs: ${event['availableOutputs']}");
+    print("Selected Output: ${event['selectedOutput']}");
+    print("Data Sources: ${event['availableDataSources']}");
   });
 }
 ```
@@ -111,13 +127,20 @@ void listenToAudioChanges() {
 ## 🔧 **API Reference**
 | Method | Description |
 |--------|-------------|
+| `initialize()` | Initialize audio session and start monitoring device changes. |
 | `getAvailableInputs()` | Returns a list of available audio input devices. |
 | `getAvailableOutputs()` | Returns a list of available audio output devices. |
-| `selectInput(String inputId)` | Sets the preferred audio input device. |
-| `getAvailableDataSources(String inputId)` | Returns available microphone data sources for a selected input. |
-| `selectDataSource(String inputId, String sourceId)` | Sets the preferred microphone data source. |
+| `selectInput(String uid)` | Sets the preferred audio input device. |
+| `selectOutput(String uid)` | Sets the preferred audio output device. **Android**: Full control. **iOS**: Limited control. |
+| `getSelectedInput()` | Returns currently selected input device. |
+| `getSelectedOutput()` | Returns currently selected output device. |
+| `getAvailableDataSources()` | Returns available microphone data sources for the selected input. |
+| `selectDataSource(int dataSourceID)` | Sets the preferred microphone data source. |
 | `getSelectedInputDeviceId()` | **Android only**: Returns device ID for use with `AudioRecord.setPreferredDevice()`. Returns null on iOS. |
-| `onAudioRouteChanged` | A stream that listens for audio input/output changes. |
+| `getSelectedOutputDeviceId()` | **Android only**: Returns device ID for use with `AudioTrack.setPreferredDevice()`. Returns null on iOS. |
+| `setDefaultToSpeaker(bool enable)` | **iOS only**: Enable/disable built-in speaker. No effect on Android. |
+| `deviceEvents()` | Stream that listens for audio device changes (inputs, outputs, data sources). |
+| `dispose()` | Clean up plugin resources. |
 
 ---
 
@@ -133,10 +156,24 @@ void listenToAudioChanges() {
   - `Voice Communication` - Optimized for VoIP calls
   - `Voice Recognition` - Optimized for speech recognition
   - `Camcorder` - Optimized for video recording
-- **Device Selection**:
+- **Input Device Selection**:
   - Plugin provides device enumeration and selection tracking
   - **For audio recording (MediaRecorder/AudioRecord)**: You must use `getSelectedInputDeviceId()` and call `setPreferredDevice()` - see [RECORDING_INTEGRATION.md](RECORDING_INTEGRATION.md)
+- **Output Device Selection**:
+  - Full programmatic control over output devices
+  - `selectOutput()` uses `AudioManager.setCommunicationDevice()` on API 31+
+  - For older versions: Use `getSelectedOutputDeviceId()` with `AudioTrack.setPreferredDevice()`
+  - Supports: Built-in Speaker, Built-in Earpiece, Bluetooth (SCO/A2DP), Wired Headphones, USB Audio
 - **Bluetooth**: Full support for Bluetooth headsets with accurate device names (requires BLUETOOTH_CONNECT permission on Android 12+)
+
+### **iOS Implementation Notes**
+- **Input Device Selection**: Full programmatic control via `AVAudioSession.setPreferredInput()`
+- **Output Device Selection**: **Limited control** due to iOS API restrictions:
+  - Cannot programmatically select specific Bluetooth devices
+  - Can control via category options (e.g., `setDefaultToSpeaker()`)
+  - System decides output routing based on priorities
+  - For user selection: Must use system Route Picker UI
+- **Data Sources**: Physical microphone characteristics (e.g., "Voice Isolation", "Wide Spectrum")
 
 ### **⚠️ Important for Audio Recording**
 
@@ -161,10 +198,10 @@ final deviceId = await AudioDevicesManager.getSelectedInputDeviceId();
 ## 📜 **Roadmap**
 - ✅ Implement **iOS** support
 - ✅ Add **Android** support (using `AudioManager` + `AudioDeviceInfo`)
+- ✅ Add support for **audio output device selection**
 - 🔊 Add **audio recording and playback** features
 - 📈 Improve error handling and logging
 - 🧪 Add comprehensive unit and integration tests
-- 📱 Add support for audio output device selection
 - 🌐 Consider macOS/Windows support
 
 ---

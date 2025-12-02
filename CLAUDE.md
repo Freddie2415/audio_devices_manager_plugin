@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Flutter plugin for managing audio input and output devices on iOS and Android. It provides enumeration, selection, and real-time monitoring of audio devices like microphones, Bluetooth headsets, wired headphones, and USB audio devices.
+This is a Flutter plugin for managing audio input and output devices on iOS and Android. It provides enumeration, selection, and real-time monitoring of audio devices like microphones, speakers, Bluetooth headsets, wired headphones, and USB audio devices.
 
 **Key characteristics:**
 - Cross-platform plugin (iOS via Swift + AVAudioSession, Android via Kotlin + AudioManager)
 - Platform channels architecture (MethodChannel for requests, EventChannel for real-time updates)
-- Version: 0.0.5
+- **NEW**: Full output device management (speakers, headphones, Bluetooth)
+- Version: 0.0.6
 - Min SDK: Dart ^3.7.0, Flutter >=3.3.0, Android API 23+
 
 ## Common Commands
@@ -78,6 +79,8 @@ cd android && ./gradlew build
 
 ### Platform Differences (Critical for Implementation)
 
+**Input Devices:**
+
 **iOS:**
 - `selectInput()` applies globally - all recording APIs automatically use selected device
 - `getSelectedInputDeviceId()` returns null (device ID not needed)
@@ -86,6 +89,20 @@ cd android && ./gradlew build
 - `selectInput()` only tracks selection - does NOT route audio automatically
 - Must call `getSelectedInputDeviceId()` and pass to `AudioRecord.setPreferredDevice()`
 - See RECORDING_INTEGRATION.md for complete integration patterns
+
+**Output Devices:**
+
+**iOS:**
+- `selectOutput()` is informational only - cannot programmatically select specific output device
+- System controls output routing based on category options
+- Use `setDefaultToSpeaker()` to control speaker vs other outputs
+- For user control, must use system Route Picker UI
+
+**Android:**
+- `selectOutput()` provides full programmatic control
+- Uses `AudioManager.setCommunicationDevice()` on API 31+
+- For older APIs: Use `getSelectedOutputDeviceId()` with `AudioTrack.setPreferredDevice()`
+- Supports: Built-in Speaker, Earpiece, Bluetooth (SCO/A2DP), Wired Headphones, USB
 
 **Data Sources:**
 - iOS: Physical microphone modes (AVAudioSessionDataSourceDescription)
@@ -190,26 +207,31 @@ When modifying this plugin:
 
 ## Important Files for Common Tasks
 
-**Adding new device types:**
-- Android: AudioDevicesManagerPlugin.kt:204-216 (`isValidInputDevice`)
+**Adding new input device types:**
+- Android: AudioDevicesManagerPlugin.kt (`isValidInputDevice`)
 - iOS: No filtering needed (AVAudioSession handles all types)
 
+**Adding new output device types:**
+- Android: AudioDevicesManagerPlugin.kt (`isValidOutputDevice`)
+- iOS: Uses AVAudioSession currentRoute.outputs
+
 **Modifying device enumeration:**
-- Android: AudioDevicesManagerPlugin.kt:189-202 (`fetchAudioDevices`)
-- iOS: AudioDevicesManagerPlugin.swift:160-171 (`fetchAudioDevices`)
+- Android: AudioDevicesManagerPlugin.kt (`fetchAudioDevices`)
+- iOS: AudioDevicesManagerPlugin.swift (`fetchAudioDevices`, `fetchOutputDevices`)
 
 **Changing device name logic:**
-- Android: AudioDevicesManagerPlugin.kt:227-255 (`getDeviceName`)
+- Android: AudioDevicesManagerPlugin.kt (`getDeviceName`, `getOutputDeviceName`)
 - iOS: Uses AVAudioSessionPortDescription.portName directly
 
 **Adding new MethodChannel methods:**
-1. Add case to `onMethodCall` in native code
+1. Add case to `onMethodCall` in native code (Swift/Kotlin)
 2. Add static method to lib/audio_devices_manager.dart
-3. Update example app if demonstrating new feature
+3. Update EventChannel data structure if needed (`sendDeviceUpdateEvent`)
+4. Update example app to demonstrate new feature
 
 ## Known Limitations
 
-1. **Android API < 31**: `setCommunicationDevice()` unavailable - selection tracked but not system-enforced
-2. **Android Data Sources**: Not true equivalent to iOS - returns audio source types instead of physical mic characteristics
-3. **Output Device Selection**: Not yet implemented (roadmap item)
+1. **iOS Output Selection**: Cannot programmatically select specific Bluetooth device - system controls routing
+2. **Android API < 31**: `setCommunicationDevice()` unavailable for outputs - must use AudioTrack.setPreferredDevice()
+3. **Android Data Sources**: Not true equivalent to iOS - returns audio source types instead of physical mic characteristics
 4. **Bluetooth A2DP**: Only SCO (voice) headsets enumerated as inputs - A2DP (music) devices don't support microphone
