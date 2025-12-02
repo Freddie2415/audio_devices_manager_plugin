@@ -15,14 +15,16 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   StreamSubscription<Map<String, dynamic>>? _subscription;
 
-  List<Map> _availableInputs = [];
-  Map? _selectedInput;
+  List<Map<String, dynamic>> _availableInputs = [];
+  Map<String, dynamic>? _selectedInput;
 
-  List<Map> _availableDataSources = [];
-  Map? _selectedDataSource;
+  List<Map<String, dynamic>> _availableDataSources = [];
+  Map<String, dynamic>? _selectedDataSource;
 
   bool _permissionsGranted = false;
+  bool _bluetoothGranted = false;
   String _permissionStatus = 'Checking permissions...';
+  int? _androidDeviceId;
 
   @override
   void initState() {
@@ -31,9 +33,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _requestPermissionsAndInit() async {
-    // Запрашиваем необходимые permissions
-    final micPermission = await Permission.microphone.request();
-
+    // Запрашиваем только Bluetooth permission для получения имен устройств
     bool bluetoothGranted = true;
     if (Platform.isAndroid) {
       // На Android 12+ нужно разрешение для Bluetooth
@@ -44,19 +44,17 @@ class _HomePageState extends State<HomePage> {
     }
 
     setState(() {
-      _permissionsGranted = micPermission.isGranted;
-      if (_permissionsGranted) {
-        _permissionStatus = 'Permissions granted ✓';
-      } else if (micPermission.isPermanentlyDenied) {
-        _permissionStatus = 'Permissions permanently denied. Please enable in settings.';
+      _permissionsGranted = true; // Микрофон не требуется для перечисления устройств
+      _bluetoothGranted = bluetoothGranted;
+
+      if (!_bluetoothGranted && Platform.isAndroid) {
+        _permissionStatus = 'Bluetooth permission denied (device names may not show correctly)';
       } else {
-        _permissionStatus = 'Permissions denied. App may not work correctly.';
+        _permissionStatus = 'Ready to enumerate audio devices ✓';
       }
     });
 
-    if (_permissionsGranted) {
-      await _initAudioManager();
-    }
+    await _initAudioManager();
   }
 
   Future<void> _initAudioManager() async {
@@ -66,36 +64,50 @@ class _HomePageState extends State<HomePage> {
     // Подписываемся на события
     _subscription = AudioDevicesManager.deviceEvents().listen((event) {
       // event — это Map c полями: availableInputs, selectedInput, ...
-      print('📡 [AudioDevices] Event received:');
-      print('   Available inputs: ${event['availableInputs']}');
-      print('   Selected input: ${event['selectedInput']}');
-      print('   Available data sources: ${event['availableDataSources']}');
-      print('   Selected data source: ${event['selectedDataSource']}');
+      debugPrint('📡 [AudioDevices] Event received:');
+      debugPrint('   Available inputs: ${event['availableInputs']}');
+      debugPrint('   Selected input: ${event['selectedInput']}');
+      debugPrint('   Available data sources: ${event['availableDataSources']}');
+      debugPrint('   Selected data source: ${event['selectedDataSource']}');
 
       setState(() {
-        _availableInputs = List<Map>.from(
-          event['availableInputs'] as List,
-        );
+        _availableInputs = (event['availableInputs'] as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
 
         if (event['selectedInput'] != null && event['selectedInput'] is Map) {
-          _selectedInput = Map.from(event['selectedInput']);
+          _selectedInput = Map<String, dynamic>.from(event['selectedInput'] as Map);
         } else {
           _selectedInput = null;
         }
 
-        _availableDataSources = List<Map>.from(
-          event['availableDataSources'] ?? [],
-        );
+        _availableDataSources = (event['availableDataSources'] as List? ?? [])
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
 
         if (event['selectedDataSource'] != null &&
             event['selectedDataSource'] is Map) {
-          _selectedDataSource = Map.from(
-            event['selectedDataSource'],
+          _selectedDataSource = Map<String, dynamic>.from(
+            event['selectedDataSource'] as Map,
           );
         } else {
           _selectedDataSource = null;
         }
       });
+
+      // Обновляем Android Device ID при изменении выбранного устройства
+      if (Platform.isAndroid && event['selectedInput'] != null) {
+        _updateAndroidDeviceId();
+      }
+    });
+  }
+
+  Future<void> _updateAndroidDeviceId() async {
+    if (!Platform.isAndroid) return;
+
+    final deviceId = await AudioDevicesManager.getSelectedInputDeviceId();
+    setState(() {
+      _androidDeviceId = deviceId;
     });
   }
 
@@ -157,6 +169,43 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 8),
           const Text("Available Inputs:", style: TextStyle(fontSize: 16)),
 
+          // Показываем Android Device ID (важно для интеграции с записью)
+          if (Platform.isAndroid && _androidDeviceId != null)
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue, width: 1),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.android, color: Colors.blue),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Android Device ID',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          'ID: $_androidDeviceId',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        const Text(
+                          'Use this ID for AudioRecord.setPreferredDevice()',
+                          style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
           // Перечисляем входы
           ..._availableInputs.map((input) {
             final isSelected = (input['uid'] == _selectedInput?['uid']);
@@ -165,7 +214,7 @@ class _HomePageState extends State<HomePage> {
               subtitle: Text("UID: ${input['uid']}"),
               trailing: isSelected ? const Icon(Icons.check) : null,
               onTap: () {
-                print('🎤 [User] Selecting input: ${input['portName']} (${input['uid']})');
+                debugPrint('🎤 [User] Selecting input: ${input['portName']} (${input['uid']})');
                 AudioDevicesManager.selectInput(input['uid']);
               },
             );
@@ -187,7 +236,7 @@ class _HomePageState extends State<HomePage> {
               subtitle: Text("ID: ${ds['dataSourceID']}"),
               trailing: isSelected ? const Icon(Icons.check) : null,
               onTap: () {
-                print('🎚️ [User] Selecting data source: ${ds['dataSourceName']} (${ds['dataSourceID']})');
+                debugPrint('🎚️ [User] Selecting data source: ${ds['dataSourceName']} (${ds['dataSourceID']})');
                 AudioDevicesManager.selectDataSource(ds['dataSourceID']);
               },
             );

@@ -292,31 +292,36 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
                     var connectedAudioDevice: String? = null
 
                     for (btDevice in bondedDevices) {
-                        val deviceClass = btDevice.bluetoothClass
-                        val majorClass = deviceClass?.majorDeviceClass
-                        val name = btDevice.name
-
-                        // Log all devices for diagnostics
-                        Log.d(TAG, "Bonded device: $name, address: ${btDevice.address}, majorClass: $majorClass, bondState: ${btDevice.bondState}")
-
-                        // Check if device is connected
                         try {
-                            val isConnectedMethod = btDevice.javaClass.getMethod("isConnected")
-                            val isConnected = isConnectedMethod.invoke(btDevice) as Boolean
-                            Log.d(TAG, "  -> isConnected: $isConnected")
+                            val deviceClass = btDevice.bluetoothClass
+                            val majorClass = deviceClass?.majorDeviceClass
+                            val name = btDevice.name
 
-                            if (isConnected && deviceClass != null) {
-                                // Audio/Video class (0x0400 = 1024)
-                                if (majorClass == 1024) {
-                                    Log.d(TAG, "Found CONNECTED audio device: $name")
-                                    if (!name.isNullOrEmpty()) {
-                                        connectedAudioDevice = name
-                                        break
+                            // Log all devices for diagnostics
+                            Log.d(TAG, "Bonded device: $name, address: ${btDevice.address}, majorClass: $majorClass, bondState: ${btDevice.bondState}")
+
+                            // Check if device is connected
+                            try {
+                                val isConnectedMethod = btDevice.javaClass.getMethod("isConnected")
+                                val isConnected = isConnectedMethod.invoke(btDevice) as Boolean
+                                Log.d(TAG, "  -> isConnected: $isConnected")
+
+                                if (isConnected && deviceClass != null) {
+                                    // Audio/Video class (0x0400 = 1024)
+                                    if (majorClass == 1024) {
+                                        Log.d(TAG, "Found CONNECTED audio device: $name")
+                                        if (!name.isNullOrEmpty()) {
+                                            connectedAudioDevice = name
+                                            break
+                                        }
                                     }
                                 }
+                            } catch (e: Exception) {
+                                Log.d(TAG, "  -> Cannot check connection status: ${e.message}")
                             }
-                        } catch (e: Exception) {
-                            Log.d(TAG, "  -> Cannot check connection status: ${e.message}")
+                        } catch (e: SecurityException) {
+                            // Permission denied - skip this device
+                            Log.d(TAG, "  -> Permission denied for device info: ${e.message}")
                         }
                     }
 
@@ -327,16 +332,21 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
 
                     // If no connected device found, use first audio device as fallback
                     for (btDevice in bondedDevices) {
-                        val deviceClass = btDevice.bluetoothClass
-                        if (deviceClass != null) {
-                            val majorClass = deviceClass.majorDeviceClass
-                            if (majorClass == 1024) {
-                                val name = btDevice.name
-                                if (!name.isNullOrEmpty()) {
-                                    Log.d(TAG, "Using first audio device as fallback: $name")
-                                    return name
+                        try {
+                            val deviceClass = btDevice.bluetoothClass
+                            if (deviceClass != null) {
+                                val majorClass = deviceClass.majorDeviceClass
+                                if (majorClass == 1024) {
+                                    val name = btDevice.name
+                                    if (!name.isNullOrEmpty()) {
+                                        Log.d(TAG, "Using first audio device as fallback: $name")
+                                        return name
+                                    }
                                 }
                             }
+                        } catch (e: SecurityException) {
+                            // Permission denied - skip this device
+                            Log.d(TAG, "  -> Permission denied for fallback device: ${e.message}")
                         }
                     }
                 }

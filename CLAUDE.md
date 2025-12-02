@@ -1,0 +1,215 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+This is a Flutter plugin for managing audio input and output devices on iOS and Android. It provides enumeration, selection, and real-time monitoring of audio devices like microphones, Bluetooth headsets, wired headphones, and USB audio devices.
+
+**Key characteristics:**
+- Cross-platform plugin (iOS via Swift + AVAudioSession, Android via Kotlin + AudioManager)
+- Platform channels architecture (MethodChannel for requests, EventChannel for real-time updates)
+- Version: 0.0.5
+- Min SDK: Dart ^3.7.0, Flutter >=3.3.0, Android API 23+
+
+## Common Commands
+
+### Testing
+```bash
+# Run all tests
+flutter test
+
+# Run tests in example app
+cd example && flutter test
+```
+
+### Building
+```bash
+# Build example app for iOS
+cd example && flutter build ios
+
+# Build example app for Android
+cd example && flutter build apk
+
+# Run example app
+cd example && flutter run
+```
+
+### Linting
+```bash
+# Analyze Dart code
+flutter analyze
+
+# Format Dart code
+dart format .
+```
+
+### Native Development
+```bash
+# iOS: Open native code in Xcode
+open ios/audio_devices_manager.xcworkspace
+
+# Android: Build native code
+cd android && ./gradlew build
+```
+
+## Architecture
+
+### Three-Layer Platform Channel Pattern
+
+1. **Dart API Layer** (`lib/audio_devices_manager.dart`)
+   - Single static class with MethodChannel and EventChannel
+   - All methods are static - no instance management needed
+   - MethodChannel handles request/response calls
+   - EventChannel provides Stream for real-time device updates
+
+2. **iOS Layer** (`ios/.../AudioDevicesManagerPlugin.swift`)
+   - Uses AVAudioSession API
+   - Device selection via `setPreferredInput()` - applies globally to all recording
+   - Data sources represent physical microphone characteristics (e.g., "Voice Isolation", "Wide Spectrum")
+   - NotificationCenter monitors route changes (device connect/disconnect)
+
+3. **Android Layer** (`android/.../AudioDevicesManagerPlugin.kt`)
+   - Uses AudioManager + AudioDeviceInfo API (API 23+)
+   - Device selection tracked via SharedPreferences
+   - **Critical difference from iOS**: Device selection must be manually applied to AudioRecord via `setPreferredDevice()`
+   - Data sources emulated via MediaRecorder.AudioSource types (not physical mic characteristics)
+   - AudioDeviceCallback monitors device changes
+
+### Platform Differences (Critical for Implementation)
+
+**iOS:**
+- `selectInput()` applies globally - all recording APIs automatically use selected device
+- `getSelectedInputDeviceId()` returns null (device ID not needed)
+
+**Android:**
+- `selectInput()` only tracks selection - does NOT route audio automatically
+- Must call `getSelectedInputDeviceId()` and pass to `AudioRecord.setPreferredDevice()`
+- See RECORDING_INTEGRATION.md for complete integration patterns
+
+**Data Sources:**
+- iOS: Physical microphone modes (AVAudioSessionDataSourceDescription)
+- Android: Audio source types for MediaRecorder (MIC, VOICE_COMMUNICATION, VOICE_RECOGNITION, CAMCORDER)
+
+### Event Flow Architecture
+
+**Initialization:**
+```
+Flutter call initialize()
+  → Plugin registers AudioDeviceCallback (Android) / NotificationCenter (iOS)
+  → Load saved preferences from SharedPreferences / UserDefaults
+  → Fetch current device list
+  → Send initial state via EventChannel
+```
+
+**Device Change:**
+```
+Hardware event (plug/unplug)
+  → AudioDeviceCallback / NotificationCenter fires
+  → Fetch updated device list
+  → Restore previously selected device if still available
+  → Send update via EventChannel Stream
+```
+
+**User Selection:**
+```
+Flutter calls selectInput(uid)
+  → Find device by ID
+  → Save to SharedPreferences / UserDefaults
+  → iOS: setPreferredInput() (applies globally)
+  → Android: Only track selection (app must use getSelectedInputDeviceId())
+  → Send update via EventChannel
+```
+
+## Key Implementation Patterns
+
+### Android Bluetooth Device Names
+The plugin implements sophisticated Bluetooth device name resolution (AudioDevicesManagerPlugin.kt:257-360):
+1. Attempt via device address (API 28+)
+2. Search bonded devices for actively connected audio device using reflection to check `isConnected()`
+3. Fallback to first paired audio device (majorDeviceClass == 1024)
+4. Returns null if all methods fail
+
+This complexity is necessary because Android doesn't provide direct BT device names via AudioDeviceInfo.
+
+### Persistence Strategy
+- **iOS**: UserDefaults stores `selectedAudioInput` (String UID) and `selectedDataSource` (NSNumber)
+- **Android**: SharedPreferences stores `selectedAudioInput` (String device ID) and `selectedAudioSource` (Int)
+- On plugin initialization, saved selections are restored if devices still available
+- If saved device not found, first available device is selected
+
+### Resource Management
+Both platforms implement `dispose()`:
+- Unregister device change callbacks/observers
+- Clear EventChannel sink
+- Set `isInitialized = false` to prevent repeated disposal
+- Android: Unregister AudioDeviceCallback
+- iOS: Remove NotificationCenter observers, deactivate AVAudioSession
+
+## Integration with Audio Recording
+
+**Critical for Android developers**: This plugin enumerates and tracks device selection but does NOT automatically route audio on Android. See RECORDING_INTEGRATION.md for complete patterns.
+
+**Pattern for all recording libraries:**
+```dart
+// 1. User selects device
+await AudioDevicesManager.selectInput(deviceUid);
+
+// 2. iOS: Done! Recording automatically uses selected device
+// Android: Get device ID and pass to native code
+final deviceId = await AudioDevicesManager.getSelectedInputDeviceId();
+
+// 3. Android native: call audioRecord.setPreferredDevice(deviceInfo)
+```
+
+## Permissions
+
+**iOS** (Info.plist):
+- `NSMicrophoneUsageDescription` - Required for microphone access
+
+**Android** (Auto-added to manifest, request at runtime):
+- `RECORD_AUDIO` - Required for microphone access
+- `MODIFY_AUDIO_SETTINGS` - Required for device selection
+- `BLUETOOTH_CONNECT` (API 31+) - Required for Bluetooth device names
+- `BLUETOOTH` (API 30-) - Legacy Bluetooth support
+
+## Testing Strategy
+
+When modifying this plugin:
+
+1. **Unit Tests**: Mock AudioManager/AVAudioSession, test device filtering and preference persistence
+2. **Integration Tests**: Requires physical devices with:
+   - Bluetooth headsets (emulators don't support BT audio)
+   - Wired headsets with microphones
+   - USB audio interfaces (Android)
+3. **Test Scenarios**:
+   - Hot-plugging devices during recording
+   - App backgrounding/foregrounding
+   - Permission denial handling
+   - Device selection persistence across app restarts
+
+## Important Files for Common Tasks
+
+**Adding new device types:**
+- Android: AudioDevicesManagerPlugin.kt:204-216 (`isValidInputDevice`)
+- iOS: No filtering needed (AVAudioSession handles all types)
+
+**Modifying device enumeration:**
+- Android: AudioDevicesManagerPlugin.kt:189-202 (`fetchAudioDevices`)
+- iOS: AudioDevicesManagerPlugin.swift:160-171 (`fetchAudioDevices`)
+
+**Changing device name logic:**
+- Android: AudioDevicesManagerPlugin.kt:227-255 (`getDeviceName`)
+- iOS: Uses AVAudioSessionPortDescription.portName directly
+
+**Adding new MethodChannel methods:**
+1. Add case to `onMethodCall` in native code
+2. Add static method to lib/audio_devices_manager.dart
+3. Update example app if demonstrating new feature
+
+## Known Limitations
+
+1. **Android API < 31**: `setCommunicationDevice()` unavailable - selection tracked but not system-enforced
+2. **Android Data Sources**: Not true equivalent to iOS - returns audio source types instead of physical mic characteristics
+3. **Output Device Selection**: Not yet implemented (roadmap item)
+4. **Bluetooth A2DP**: Only SCO (voice) headsets enumerated as inputs - A2DP (music) devices don't support microphone

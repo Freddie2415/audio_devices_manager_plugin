@@ -15,11 +15,20 @@ import 'package:audio_devices_manager/audio_devices_manager.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('getPlatformVersion test', (WidgetTester tester) async {
-    final AudioDevicesManager plugin = AudioDevicesManager();
-    // final String? version = await plugin.getPlatformVersion();
-    // The version string depends on the host platform running the test, so
-    // just assert that some non-empty string is returned.
-    // expect(version?.isNotEmpty, true);
+  testWidgets('Initialize audio devices manager', (WidgetTester tester) async {
+    // Initialize the audio manager
+    await AudioDevicesManager.initialize();
+
+    // Get available inputs
+    final inputs = await AudioDevicesManager.getAvailableInputs();
+
+    // Should have at least one input device (built-in microphone)
+    expect(inputs.isNotEmpty, true);
+
+    // Each input should have uid and portName
+    for (final input in inputs) {
+      expect(input['uid'], isNotNull);
+      expect(input['portName'], isNotNull);
+    }
   });
 }

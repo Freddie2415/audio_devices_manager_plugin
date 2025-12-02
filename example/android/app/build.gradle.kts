@@ -8,7 +8,7 @@ plugins {
 android {
     namespace = "io.modacity.audio_devices_manager_example"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = "27.0.12077973"
+    ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
