@@ -1,6 +1,6 @@
 name: audio_devices_manager
-description: "A Flutter plugin for managing audio input devices on iOS and Android."
-version: 0.0.5
+description: "A Flutter plugin for managing audio input and output devices on iOS and Android."
+version: 0.0.6
 homepage:
 
 environment:

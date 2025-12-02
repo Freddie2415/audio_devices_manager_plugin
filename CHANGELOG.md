@@ -1,3 +1,14 @@
+## 0.0.6
+
+* 🔊 **Output Device Selection**: Added full support for audio output device management
+* 🎧 **New Methods**: `getAvailableOutputs()`, `selectOutput()`, `getSelectedOutput()`, `getSelectedOutputDeviceId()`
+* 🤖 **Android**: Full programmatic control via `AudioManager.setCommunicationDevice()` (API 31+)
+* 🍎 **iOS**: Limited control via category options (`setDefaultToSpeaker()`) - system controls routing
+* 📡 **EventChannel Update**: Now includes `availableOutputs` and `selectedOutput` in device events
+* 🎨 **Example App**: New output devices section with device type icons
+* 🌍 **Code Translation**: All comments (Dart, Swift, Kotlin) translated from Russian to English
+* 📖 **Documentation**: Updated README.md and CLAUDE.md with output device information
+
 ## 0.0.5
 
 * 🐛 **Android Fix**: Fixed Bluetooth device names showing phone model instead of actual device name (e.g., "AirPods" instead of "Redmi Note 8")
