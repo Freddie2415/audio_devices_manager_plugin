@@ -29,6 +29,7 @@ class _HomePageState extends State<HomePage> {
   String _permissionStatus = 'Checking permissions...';
   int? _androidInputDeviceId;
   int? _androidOutputDeviceId;
+  bool _isRefreshing = false;
 
   @override
   void initState() {
@@ -130,6 +131,65 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  /// Manual refresh of device lists
+  Future<void> _refreshDevices() async {
+    if (_isRefreshing) return;
+
+    setState(() {
+      _isRefreshing = true;
+    });
+
+    try {
+      // Get fresh lists of devices
+      final inputs = await AudioDevicesManager.getAvailableInputs();
+      final outputs = await AudioDevicesManager.getAvailableOutputs();
+      final selectedInput = await AudioDevicesManager.getSelectedInput();
+      final selectedOutput = await AudioDevicesManager.getSelectedOutput();
+      final dataSources = await AudioDevicesManager.getAvailableDataSources();
+
+      setState(() {
+        _availableInputs = inputs;
+        _selectedInput = selectedInput;
+        _availableOutputs = outputs;
+        _selectedOutput = selectedOutput;
+        _availableDataSources = dataSources;
+      });
+
+      // Update Android device IDs
+      if (Platform.isAndroid) {
+        await _updateAndroidDeviceIds();
+      }
+
+      // Show success feedback
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✓ Device list refreshed'),
+            duration: Duration(seconds: 1),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error refreshing devices: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error refreshing: $e'),
+            duration: const Duration(seconds: 2),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRefreshing = false;
+        });
+      }
+    }
+  }
+
   @override
   void dispose() {
     _subscription?.cancel();
@@ -139,9 +199,31 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Audio Devices Manager Demo")),
-      body: SingleChildScrollView(
-        child: Column(
+      appBar: AppBar(
+        title: const Text("Audio Devices Manager Demo"),
+        actions: [
+          // Refresh button
+          IconButton(
+            icon: _isRefreshing
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : const Icon(Icons.refresh),
+            onPressed: _isRefreshing ? null : _refreshDevices,
+            tooltip: 'Refresh device list',
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _refreshDevices,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Column(
           children: [
             const SizedBox(height: 16),
 
@@ -349,6 +431,7 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
           ],
+          ),
         ),
       ),
     );

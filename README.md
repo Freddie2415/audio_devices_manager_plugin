@@ -35,14 +35,16 @@ Add this permission to your `Info.plist`:
 ```
 
 ### **Android Setup**
-The plugin automatically adds required permissions to your `AndroidManifest.xml`. However, you need to request runtime permissions in your app:
+The plugin automatically adds required permissions to your `AndroidManifest.xml`. For Bluetooth device names, you need to request runtime permission:
 
 ```dart
 import 'package:permission_handler/permission_handler.dart';
 
-// Request microphone permission
-await Permission.microphone.request();
-await Permission.bluetoothConnect.request(); // For Bluetooth devices
+// Request Bluetooth permission for device names (Android 12+)
+await Permission.bluetoothConnect.request();
+
+// Note: RECORD_AUDIO is NOT required for device enumeration
+// Only request it if your app actually records audio
 ```
 
 **Minimum Android version:** Android 6.0 (API 23)
@@ -55,12 +57,15 @@ await Permission.bluetoothConnect.request(); // For Bluetooth devices
 import 'package:audio_devices_manager/audio_devices_manager.dart';
 ```
 
-### 🎤 **Get available audio inputs**
+### 🎤 **Initialize and get available audio inputs**
 ```dart
 void fetchInputs() async {
-  final audioManager = AudioDevicesManager();
-  List<AudioInput> inputs = await audioManager.getAvailableInputs();
-  print("Available Inputs: ${inputs.map((e) => e.name).toList()}");
+  // Initialize audio session
+  await AudioDevicesManager.initialize();
+
+  // Get available inputs
+  List<Map<String, dynamic>> inputs = await AudioDevicesManager.getAvailableInputs();
+  print("Available Inputs: $inputs");
 }
 ```
 
@@ -74,17 +79,24 @@ void fetchOutputs() async {
 
 ### 🎤 **Select an input device**
 ```dart
-void selectMicrophone(String inputId) async {
-  await AudioDevicesManager.selectInput(inputId);
-  print("Selected input: $inputId");
+void selectMicrophone(String inputUid) async {
+  await AudioDevicesManager.selectInput(inputUid);
+  print("Selected input: $inputUid");
+
+  // Android only: Get device ID for AudioRecord integration
+  if (Platform.isAndroid) {
+    final deviceId = await AudioDevicesManager.getSelectedInputDeviceId();
+    print("Android Input Device ID: $deviceId");
+    // Use deviceId with audioRecord.setPreferredDevice()
+  }
 }
 ```
 
 ### 🔊 **Select an output device**
 ```dart
-void selectSpeaker(String outputId) async {
-  await AudioDevicesManager.selectOutput(outputId);
-  print("Selected output: $outputId");
+void selectSpeaker(String outputUid) async {
+  await AudioDevicesManager.selectOutput(outputUid);
+  print("Selected output: $outputUid");
 
   // Android only: Get device ID for AudioTrack integration
   if (Platform.isAndroid) {
@@ -95,15 +107,17 @@ void selectSpeaker(String outputId) async {
 }
 ```
 
-### 🔊 **Get and select microphone data sources**
+### 🎚️ **Get and select microphone data sources**
 ```dart
-void fetchAndSelectDataSource(String inputId) async {
-  final audioManager = AudioDevicesManager();
-  List<AudioSource> sources = await audioManager.getAvailableDataSources(inputId);
+void fetchAndSelectDataSource() async {
+  // Get available data sources
+  List<Map<String, dynamic>> sources = await AudioDevicesManager.getAvailableDataSources();
 
   if (sources.isNotEmpty) {
-    await audioManager.selectDataSource(inputId, sources.first.id);
-    print("Selected data source: ${sources.first.name}");
+    // Select first data source
+    int dataSourceId = sources.first['dataSourceID'];
+    await AudioDevicesManager.selectDataSource(dataSourceId);
+    print("Selected data source: ${sources.first['dataSourceName']}");
   }
 }
 ```

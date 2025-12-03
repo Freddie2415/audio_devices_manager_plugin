@@ -21,6 +21,30 @@ import io.flutter.plugin.common.MethodChannel.Result
 
 /** AudioDevicesManagerPlugin */
 class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler {
+
+    companion object {
+        private const val TAG = "AudioDevicesManager"
+
+        // Static list of available data sources (audioSource types)
+        private val AVAILABLE_DATA_SOURCES = listOf(
+            mapOf(
+                "dataSourceID" to MediaRecorder.AudioSource.MIC,
+                "dataSourceName" to "Standard Microphone"
+            ),
+            mapOf(
+                "dataSourceID" to MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                "dataSourceName" to "Voice Communication"
+            ),
+            mapOf(
+                "dataSourceID" to MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                "dataSourceName" to "Voice Recognition"
+            ),
+            mapOf(
+                "dataSourceID" to MediaRecorder.AudioSource.CAMCORDER,
+                "dataSourceName" to "Camcorder"
+            )
+        )
+    }
     /// MethodChannel for one-time requests
     private lateinit var methodChannel: MethodChannel
 
@@ -60,18 +84,23 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
     /// Handler for UI thread operations
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /// Bluetooth name cache to prevent expensive lookups
+    private val bluetoothNameCache = mutableMapOf<String, String>()
+    private var bluetoothCacheTimestamp = 0L
+    private val CACHE_VALIDITY_MS = 5000L // 5 seconds
+
+    /// Debounce for device change events
+    private var updateDebounceRunnable: Runnable? = null
+    private val DEBOUNCE_DELAY_MS = 300L
+
     /// Callback for tracking audio device changes
     private val audioDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
-            mainHandler.post {
-                fetchAudioDevices()
-            }
+            fetchAudioDevicesDebounced()
         }
 
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
-            mainHandler.post {
-                fetchAudioDevices()
-            }
+            fetchAudioDevicesDebounced()
         }
     }
 
@@ -162,7 +191,7 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
             }
 
             "getSelectedOutput" -> {
-                val selected = selectedOutput?.let { deviceInfoToMap(it) }
+                val selected = selectedOutput?.let { outputDeviceInfoToMap(it) }
                 result.success(selected)
             }
 
@@ -226,6 +255,17 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
     }
 
     // MARK: - Fetching device list
+
+    /// Debounced version of fetchAudioDevices to prevent excessive calls
+    private fun fetchAudioDevicesDebounced() {
+        updateDebounceRunnable?.let { mainHandler.removeCallbacks(it) }
+
+        updateDebounceRunnable = Runnable {
+            fetchAudioDevices()
+        }
+
+        mainHandler.postDelayed(updateDebounceRunnable!!, DEBOUNCE_DELAY_MS)
+    }
 
     private fun fetchAudioDevices() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -303,9 +343,45 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
         return "Unknown"
     }
 
-    @Suppress("MissingPermission")
     private fun getBluetoothDeviceName(device: AudioDeviceInfo): String? {
-        val TAG = "AudioDevicesManager"
+        // Check runtime permission for Bluetooth (API 31+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (context?.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "BLUETOOTH_CONNECT permission not granted")
+                return null
+            }
+        }
+
+        val deviceId = device.id.toString()
+        val now = System.currentTimeMillis()
+
+        // Check cache validity
+        if (now - bluetoothCacheTimestamp < CACHE_VALIDITY_MS) {
+            bluetoothNameCache[deviceId]?.let {
+                Log.d(TAG, "Using cached Bluetooth name: $it")
+                return it
+            }
+        }
+
+        // If cache is stale, clear it
+        if (now - bluetoothCacheTimestamp >= CACHE_VALIDITY_MS) {
+            bluetoothNameCache.clear()
+        }
+
+        // Get name from Bluetooth adapter
+        val name = getBluetoothDeviceNameInternal(device)
+        if (name != null) {
+            bluetoothNameCache[deviceId] = name
+            bluetoothCacheTimestamp = now
+            Log.d(TAG, "Cached Bluetooth name: $name for device: $deviceId")
+        }
+
+        return name
+    }
+
+    @Suppress("MissingPermission")
+    private fun getBluetoothDeviceNameInternal(device: AudioDeviceInfo): String? {
         try {
             val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
             if (bluetoothAdapter == null) {
@@ -412,6 +488,13 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
         return mapOf(
             "uid" to device.id.toString(),
             "portName" to getDeviceName(device)
+        )
+    }
+
+    private fun outputDeviceInfoToMap(device: AudioDeviceInfo): Map<String, String> {
+        return mapOf(
+            "uid" to device.id.toString(),
+            "portName" to getOutputDeviceName(device)
         )
     }
 
@@ -559,26 +642,8 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
     // MARK: - Data Sources (emulation via audioSource)
 
     private fun getAvailableDataSourcesList(): List<Map<String, Any>> {
-        // Android has no direct equivalent of iOS dataSources
-        // Return audioSource types as alternative
-        return listOf(
-            mapOf(
-                "dataSourceID" to MediaRecorder.AudioSource.MIC,
-                "dataSourceName" to "Standard Microphone"
-            ),
-            mapOf(
-                "dataSourceID" to MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                "dataSourceName" to "Voice Communication"
-            ),
-            mapOf(
-                "dataSourceID" to MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                "dataSourceName" to "Voice Recognition"
-            ),
-            mapOf(
-                "dataSourceID" to MediaRecorder.AudioSource.CAMCORDER,
-                "dataSourceName" to "Camcorder"
-            )
-        )
+        // Return static list from companion object
+        return AVAILABLE_DATA_SOURCES
     }
 
     private fun selectDataSource(dataSourceID: Int) {
@@ -602,7 +667,7 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
             "availableDataSources" to getAvailableDataSourcesList(),
             "selectedDataSource" to getSelectedDataSource(),
             "availableOutputs" to getAvailableOutputsList(),
-            "selectedOutput" to (selectedOutput?.let { deviceInfoToMap(it) })
+            "selectedOutput" to (selectedOutput?.let { outputDeviceInfoToMap(it) })
         )
 
         mainHandler.post {
@@ -625,11 +690,31 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
             return
         }
 
+        // Cancel any pending debounce callbacks
+        updateDebounceRunnable?.let { mainHandler.removeCallbacks(it) }
+        updateDebounceRunnable = null
+
+        // Unregister audio device callback
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback)
         }
 
+        // Clear Bluetooth cache
+        bluetoothNameCache.clear()
+        bluetoothCacheTimestamp = 0L
+
+        // Clear all references to prevent memory leaks
         eventSink = null
+        context = null
+        audioManager = null
+        sharedPreferences = null
+
+        // Clear device lists
+        availableInputs = emptyList()
+        availableOutputs = emptyList()
+        selectedInput = null
+        selectedOutput = null
+
         isInitialized = false
     }
 }

@@ -182,13 +182,14 @@ final deviceId = await AudioDevicesManager.getSelectedInputDeviceId();
 ## Permissions
 
 **iOS** (Info.plist):
-- `NSMicrophoneUsageDescription` - Required for microphone access
+- `NSMicrophoneUsageDescription` - Required for microphone access (only if using recording)
 
-**Android** (Auto-added to manifest, request at runtime):
-- `RECORD_AUDIO` - Required for microphone access
-- `MODIFY_AUDIO_SETTINGS` - Required for device selection
-- `BLUETOOTH_CONNECT` (API 31+) - Required for Bluetooth device names
-- `BLUETOOTH` (API 30-) - Legacy Bluetooth support
+**Android** (Auto-added to manifest):
+- `BLUETOOTH_CONNECT` (API 31+) - Required for Bluetooth device names (request at runtime)
+- `BLUETOOTH` (API 30-) - Legacy Bluetooth support (request at runtime)
+- `MODIFY_AUDIO_SETTINGS` - Required for output device selection via `setCommunicationDevice()` (normal protection level, no runtime request needed)
+
+**Note**: As of v0.0.6, `RECORD_AUDIO` is NOT required for device enumeration. Only request it if your app performs actual audio recording.
 
 ## Testing Strategy
 

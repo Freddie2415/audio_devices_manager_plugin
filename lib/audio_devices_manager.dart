@@ -115,12 +115,6 @@ class AudioDevicesManager {
     await _methodChannel.invokeMethod('setDefaultToSpeaker', {'enable': enable});
   }
 
-  /// iOS: Show system Route Picker for user device selection
-  /// Android: this method has no effect
-  static Future<void> showRoutePicker() async {
-    await _methodChannel.invokeMethod('showRoutePicker');
-  }
-
   /// (Optional) Dispose plugin resources
   static Future<void> dispose() async {
     await _methodChannel.invokeMethod('dispose');

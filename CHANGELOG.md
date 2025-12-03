@@ -1,3 +1,13 @@
+## 0.0.7 (Unreleased)
+
+* 🐛 **Critical Fix**: Added missing `MODIFY_AUDIO_SETTINGS` permission required for `setCommunicationDevice()` on Android API 31+
+* 🐛 **Bug Fix**: Fixed output device names on Android - now uses `getOutputDeviceName()` instead of `getDeviceName()`
+* 🐛 **Bug Fix**: Fixed Bluetooth cache timestamp logic to prevent race conditions
+* 📖 **Documentation**: Updated README.md code examples to match current static API (removed incorrect instance creation)
+* 🗑️ **API Cleanup**: Removed unimplemented `showRoutePicker()` method from public API
+* 📝 **Permissions**: Clarified that `RECORD_AUDIO` is NOT required for device enumeration (only for actual recording)
+* 📖 **Documentation**: Updated CLAUDE.md with accurate permission requirements
+
 ## 0.0.6
 
 * 🔊 **Output Device Selection**: Added full support for audio output device management

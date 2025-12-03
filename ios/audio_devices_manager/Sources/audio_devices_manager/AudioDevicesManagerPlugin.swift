@@ -18,8 +18,18 @@ public class AudioDevicesManagerPlugin: NSObject, FlutterPlugin {
     private var selectedOutput: AVAudioSessionPortDescription?
     private var defaultToSpeaker: Bool = true
 
+    // MARK: - Persistence
+    private let userDefaults = UserDefaults.standard
+    private let selectedInputKey = "selectedAudioInput"
+    private let selectedDataSourceKey = "selectedDataSource"
+    private let selectedOutputKey = "selectedAudioOutput"
+
     // MARK: - EventChannel (for change streams)
     private var eventSink: FlutterEventSink?
+
+    // MARK: - Debounce for route changes
+    private var debounceWorkItem: DispatchWorkItem?
+    private let debounceDelay: TimeInterval = 0.3
     
     // MARK: - Plugin registration (called by Flutter framework)
     public static func register(with registrar: FlutterPluginRegistrar) {
@@ -129,13 +139,6 @@ public class AudioDevicesManagerPlugin: NSObject, FlutterPlugin {
             setDefaultToSpeakerOption(enable: enable)
             result(nil)
 
-        case "showRoutePicker":
-            // System Route Picker must be shown from UI layer
-            // Here we only send a notification
-            result(FlutterError(code: "NOT_IMPLEMENTED",
-                               message: "Route Picker must be called from UI layer",
-                               details: nil))
-
         case "dispose":
             dispose()
             result(nil)
@@ -173,7 +176,6 @@ extension AudioDevicesManagerPlugin {
             // Already initialized, skip
             return
         }
-        isInitialized = true
 
         // Configure audio session
         do {
@@ -183,32 +185,70 @@ extension AudioDevicesManagerPlugin {
                                                    .allowBluetoothA2DP,
                                                    .defaultToSpeaker])
             try audioSession.setActive(true)
+
+            // Only set isInitialized after successful initialization
+            isInitialized = true
+
+            // Get current device state immediately
+            fetchAudioDevices()
+
+            // Subscribe to route changes
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleRouteChange(_:)),
+                name: AVAudioSession.routeChangeNotification,
+                object: nil
+            )
         } catch {
             print("Error setting audio session: \(error.localizedDescription)")
+            // isInitialized remains false, allowing retry
         }
-
-        // Get current device state immediately
-        fetchAudioDevices()
-
-        // Subscribe to route changes
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleRouteChange(_:)),
-            name: AVAudioSession.routeChangeNotification,
-            object: nil
-        )
     }
 
     /// Audio route change handler (headphones connect/disconnect, etc.)
     @objc private func handleRouteChange(_ notification: Notification) {
-        DispatchQueue.main.async {
+        // Cancel previous debounce work item
+        debounceWorkItem?.cancel()
+
+        // Create new work item with debounce
+        // IMPORTANT: AVAudioSession must be accessed from main thread for correct data
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+
+            // Fetch audio devices on main thread (AVAudioSession requires main thread)
             self.fetchAudioDevices()
         }
+
+        debounceWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + debounceDelay, execute: workItem)
     }
 
     /// Update list of available inputs and selected device
     private func fetchAudioDevices() {
-        availableInputs = audioSession.availableInputs ?? []
+        // Get all potentially available inputs
+        let allInputs = audioSession.availableInputs ?? []
+
+        // Get currently connected ports from route
+        let currentInputUIDs = Set(audioSession.currentRoute.inputs.map { $0.uid })
+        let currentOutputUIDs = Set(audioSession.currentRoute.outputs.map { $0.uid })
+
+        // Filter: show only Built-In Microphone + currently connected devices
+        // Built-In Microphone is always available even if not in currentRoute
+        availableInputs = allInputs.filter { input in
+            // Always show built-in microphone
+            if input.portType == .builtInMic {
+                return true
+            }
+
+            // For Bluetooth devices: check outputs (iOS doesn't auto-switch inputs to BT)
+            // If AirPods are in outputs, their microphone is also available as input
+            if input.portType == .bluetoothHFP || input.portType == .bluetoothA2DP {
+                return currentOutputUIDs.contains(input.uid)
+            }
+
+            // For other devices (wired, USB): check inputs
+            return currentInputUIDs.contains(input.uid)
+        }
 
         // Load last selected input (from UserDefaults), if any
         loadSelectedInput()
@@ -250,7 +290,9 @@ extension AudioDevicesManagerPlugin {
         do {
             try audioSession.setPreferredInput(input)
             selectedInput = input
-            UserDefaults.standard.set(uid, forKey: "selectedAudioInput")
+
+            // Save selection to UserDefaults
+            userDefaults.set(uid, forKey: selectedInputKey)
         } catch {
             print("Error selecting audio input: \(error.localizedDescription)")
         }
@@ -260,22 +302,34 @@ extension AudioDevicesManagerPlugin {
         sendDeviceUpdateEvent()
     }
 
-    /// Load previously saved input
+    /// Synchronize selectedInput with actual active microphone from currentRoute
+    /// Priority:
+    /// 1. Previously saved input from UserDefaults (if still available)
+    /// 2. Current active input from audioSession.currentRoute.inputs.first
+    /// 3. Fallback to first available input
     private func loadSelectedInput() {
-        guard
-            let savedUID = UserDefaults.standard.string(forKey: "selectedAudioInput"),
-            let input = availableInputs.first(where: { $0.uid == savedUID })
-        else {
-            // If nothing saved, take first
-            selectedInput = availableInputs.first
+        // Try to load saved input from UserDefaults
+        if let savedUID = userDefaults.string(forKey: selectedInputKey),
+           let savedInput = availableInputs.first(where: { $0.uid == savedUID }) {
+            // Saved input is still available - use it
+            selectedInput = savedInput
+
+            // Try to apply it (best effort)
+            try? audioSession.setPreferredInput(savedInput)
             return
         }
 
-        do {
-            try audioSession.setPreferredInput(input)
-            selectedInput = input
-        } catch {
-            print("Error setting saved input: \(error.localizedDescription)")
+        // Get current active input from system
+        let currentActiveInput = audioSession.currentRoute.inputs.first
+
+        // Check if current active input is in our available list
+        if let activeInput = currentActiveInput,
+           let matchingInput = availableInputs.first(where: { $0.uid == activeInput.uid }) {
+            // Current active input is available - use it as selected
+            selectedInput = matchingInput
+        } else {
+            // Fallback to first available input
+            selectedInput = availableInputs.first
         }
     }
 
@@ -306,7 +360,9 @@ extension AudioDevicesManagerPlugin {
         do {
             try input.setPreferredDataSource(source)
             selectedDataSource = source
-            UserDefaults.standard.set(source.dataSourceID, forKey: "selectedDataSource")
+
+            // Save selection to UserDefaults
+            userDefaults.set(dataSourceID, forKey: selectedDataSourceKey)
         } catch {
             print("Error selecting microphone data source: \(error.localizedDescription)")
         }
@@ -314,18 +370,17 @@ extension AudioDevicesManagerPlugin {
     }
     
     private func loadSelectedDataSource() {
-        guard
-            let savedDataSourceID = UserDefaults.standard.value(forKey: "selectedDataSource") as? NSNumber,
-            let source = availableDataSources.first(where: { $0.dataSourceID == savedDataSourceID })
-        else {
+        // Try to load saved data source from UserDefaults
+        if let savedDataSourceID = userDefaults.object(forKey: selectedDataSourceKey) as? NSNumber,
+           let savedDataSource = availableDataSources.first(where: { $0.dataSourceID == savedDataSourceID }) {
+            // Saved data source is still available - use it
+            selectedDataSource = savedDataSource
+
+            // Try to apply it (best effort)
+            try? selectedInput?.setPreferredDataSource(savedDataSource)
+        } else {
+            // Fallback to first available data source
             selectedDataSource = availableDataSources.first
-            return
-        }
-        do {
-            try selectedInput?.setPreferredDataSource(source)
-            selectedDataSource = source
-        } catch {
-            print("Error loading saved data source: \(error.localizedDescription)")
         }
     }
 
@@ -351,11 +406,13 @@ extension AudioDevicesManagerPlugin {
         }
 
         // On iOS we cannot programmatically change the output
-        // But we can save user preference for information
+        // Just track the selection for information
         selectedOutput = output
-        UserDefaults.standard.set(uid, forKey: "selectedAudioOutput")
 
-        print("Output selection saved (iOS limitation: cannot programmatically change): \(output.portName)")
+        // Save selection to UserDefaults (for tracking only)
+        userDefaults.set(uid, forKey: selectedOutputKey)
+
+        print("Output selection tracked (iOS limitation: cannot programmatically change): \(output.portName)")
         sendDeviceUpdateEvent()
     }
 
@@ -372,7 +429,6 @@ extension AudioDevicesManagerPlugin {
             try audioSession.setCategory(.playAndRecord,
                                         mode: .default,
                                         options: options)
-            UserDefaults.standard.set(enable, forKey: "defaultToSpeaker")
 
             // Update device list after changing options
             fetchOutputDevices()
@@ -420,9 +476,16 @@ extension AudioDevicesManagerPlugin {
 
     /// You can call this from Dart if needed to completely "turn off" the plugin
     private func dispose() {
+        // Cancel any pending debounce work items
+        debounceWorkItem?.cancel()
+        debounceWorkItem = nil
+
         NotificationCenter.default.removeObserver(self)
         try? audioSession.setActive(false)
         eventSink = nil
         isInitialized = false
+
+        // Note: We intentionally do NOT clear UserDefaults here
+        // User preferences should persist across dispose/initialize cycles
     }
 }
