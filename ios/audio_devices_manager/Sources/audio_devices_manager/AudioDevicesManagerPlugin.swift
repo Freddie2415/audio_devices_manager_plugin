@@ -207,20 +207,45 @@ extension AudioDevicesManagerPlugin {
 
     /// Audio route change handler (headphones connect/disconnect, etc.)
     @objc private func handleRouteChange(_ notification: Notification) {
-        // Cancel previous debounce work item
-        debounceWorkItem?.cancel()
-
-        // Create new work item with debounce
-        // IMPORTANT: AVAudioSession must be accessed from main thread for correct data
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self = self else { return }
-
-            // Fetch audio devices on main thread (AVAudioSession requires main thread)
-            self.fetchAudioDevices()
+        // Extract and validate the reason for route change
+        guard let userInfo = notification.userInfo,
+              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
+            return
         }
 
-        debounceWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + debounceDelay, execute: workItem)
+        // Only handle relevant route change reasons
+        switch reason {
+        case .newDeviceAvailable, .oldDeviceUnavailable:
+            // Device connected or disconnected - update device list
+            // Cancel previous debounce work item
+            debounceWorkItem?.cancel()
+
+            // Use longer delay for device removal to ensure iOS has updated availableInputs
+            let delay = (reason == .oldDeviceUnavailable) ? 0.5 : debounceDelay
+
+            // Create new work item with debounce
+            // IMPORTANT: AVAudioSession must be accessed from main thread for correct data
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+
+                // Fetch audio devices on main thread (AVAudioSession requires main thread)
+                self.fetchAudioDevices()
+            }
+
+            debounceWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+
+        case .routeConfigurationChange:
+            // Configuration changed (e.g., different data source selected)
+            // Update data sources without full reload
+            updateDataSources()
+            sendDeviceUpdateEvent()
+
+        default:
+            // Ignore other reasons (categoryChange, override, wakeFromSleep, etc.)
+            break
+        }
     }
 
     /// Update list of available inputs and selected device
@@ -240,13 +265,9 @@ extension AudioDevicesManagerPlugin {
                 return true
             }
 
-            // For Bluetooth devices: check outputs (iOS doesn't auto-switch inputs to BT)
-            // If AirPods are in outputs, their microphone is also available as input
-            if input.portType == .bluetoothHFP || input.portType == .bluetoothA2DP {
-                return currentOutputUIDs.contains(input.uid)
-            }
-
-            // For other devices (wired, USB): check inputs
+            // For all other devices (including Bluetooth): check if they're in current route
+            // This ensures we immediately remove disconnected devices from the list
+            // because currentRoute.inputs updates instantly, while availableInputs has a delay
             return currentInputUIDs.contains(input.uid)
         }
 
