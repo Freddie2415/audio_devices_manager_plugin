@@ -181,8 +181,10 @@ extension AudioDevicesManagerPlugin {
         do {
             try audioSession.setCategory(.playAndRecord,
                                          mode: .default,
-                                         options: [.allowBluetooth,
+                                         options: [.mixWithOthers,
+                                                   .allowBluetooth,
                                                    .allowBluetoothA2DP,
+                                                   .allowAirPlay,
                                                    .defaultToSpeaker])
             try audioSession.setActive(true)
 
@@ -336,7 +338,11 @@ extension AudioDevicesManagerPlugin {
             selectedInput = savedInput
 
             // Try to apply it (best effort)
-            try? audioSession.setPreferredInput(savedInput)
+//            let preferredUID = audioSession.preferredInput?.uid
+//            if preferredUID != savedUID {
+//                try? audioSession.setPreferredInput(savedInput)
+//            }
+
             return
         }
 
