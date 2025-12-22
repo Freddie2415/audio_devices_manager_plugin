@@ -703,17 +703,18 @@ class AudioDevicesManagerPlugin : FlutterPlugin, MethodCallHandler, EventChannel
         bluetoothNameCache.clear()
         bluetoothCacheTimestamp = 0L
 
-        // Clear all references to prevent memory leaks
+        // Clear event sink
         eventSink = null
-        context = null
-        audioManager = null
-        sharedPreferences = null
 
         // Clear device lists
         availableInputs = emptyList()
         availableOutputs = emptyList()
         selectedInput = null
         selectedOutput = null
+
+        // Note: We intentionally do NOT clear context, audioManager, and sharedPreferences
+        // These are set in onAttachedToEngine and should persist across dispose/initialize cycles
+        // This allows the plugin to be re-initialized without being re-attached
 
         isInitialized = false
     }
